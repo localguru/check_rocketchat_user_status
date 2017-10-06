@@ -1,0 +1,257 @@
+#!/bin/bash
+
+# --------------------------------------------------
+# Nagios/Icinga2 plugin: check_rocketchat_userstatus
+# ---------------------------------------------------
+
+__AUTHOR="Marcus Schopen <marcus.schopen@uni-bielefeld.de>"
+__VERSION="0.0.1-1" # 06.10.2017
+
+# see DEFAULTS for configuartion
+
+# turn on bash traces via command line
+# DEBUG=1 check_rocketchat_user_stats.sh
+if [ ${DEBUG:=0} == "1" ]; then
+  export PS4='+ $LINENO: '
+  set -x
+fi;
+
+# setting locale to POSIX C
+export LC_ALL=C
+
+set -o errexit
+set -o pipefail
+set -o nounset
+set -o noclobber
+
+shopt -s extglob
+
+# unalias
+\unalias -a
+
+# no file an directory permissions for others
+umask o=
+
+# set a secure path
+PATH='/usr/local/bin:/bin:/usr/bin'
+export PATH
+
+# set a secure IFS
+IFS=$' \t\n'
+
+# clear the command path hash
+hash -r
+
+
+# --------------------------------------
+# DEFAULTS
+# --------------------------------------
+
+readonly DBHOST="localhost"
+readonly DBPORT="27017"
+readonly DBNAME="rocketchat"
+
+# rocket.chat stati
+readonly RC_STATI=("offline away online")
+
+# nagios exit codes
+declare -A exit_codes
+exit_codes[OK]="0"
+exit_codes[WARNING]="1"
+exit_codes[CRITICAL]="2"
+exit_codes[UNKNOWN]="3"
+
+EXIT_CODE="OK"
+EXIT_CODE_MSG=""
+RC_USER_STATUS=""
+WARNING=""
+CRITICAL=""
+
+# nagios performance values
+declare -A perfdata
+perfdata[offline]="0"
+perfdata[away]="1"
+perfdata[online]="2"
+
+# --------------------------------------
+# error and exit
+# --------------------------------------
+
+function error_and_exit() {
+
+  local msg=${1:-}
+  echo "ERROR: ${msg}" 1>&2
+  exit 3;
+}
+
+
+# --------------------------------------
+# connect to mongodb and get user status
+# --------------------------------------
+
+function get_user_status() {
+
+  CMD_STATUS=0;
+  CMD_OUTPUT=""
+  RESULT=$(mongo --quiet --host "${DBHOST}" --port "${DBPORT}" "${DBNAME}"  2>/dev/null <<EOF
+	db.users.find(
+	   {
+	    "username": "${RC_USER}",
+	   },
+	   {
+	    _id: 0,
+	    "statusConnection": 1,
+	   }
+	);
+EOF
+  )
+  # no commands inbetween here
+  CMD_STATUS=$?;
+
+  if [ "${CMD_STATUS}" = "0" ]; then
+    # split database results 
+    RC_USER_STATUS=$(echo $RESULT | cut -d"\"" -f4)
+    # rocketchat user not found
+    if [[ $RC_USER_STATUS == "" ]]; then
+     CMD_OUTPUT="user ${RC_USER} not found"
+     return 1
+    fi;
+  else
+    CMD_OUTPUT="connect to database @${DBHOST} failed"
+  fi;
+
+  return ${CMD_STATUS}
+}
+
+
+# --------------------------------------
+# simple profile syntax parsing
+# --------------------------------------
+
+function check_options() {
+
+  if [[ $w_flag = true && ! " ${RC_STATI[@]} " =~ " ${WARNING} " ]]; then
+    CMD_OUTPUT="WARNING option -w must be [online|away|offline]" 
+    return 1
+  fi;
+  
+  if [[ $c_flag = true && ! " ${RC_STATI[@]} " =~ " ${CRITICAL} " ]]; then
+    CMD_OUTPUT="CRITICAL option -c must be set to [online|away|offline]" 
+    return 1
+  fi;
+  
+  return 0
+}
+
+
+# --------------------------------------
+# MAIN
+# --------------------------------------
+
+function main() {
+
+  # check command line options 
+  check_options || {
+    error_and_exit "${CMD_OUTPUT}"
+  }
+
+  # get user status from database
+  get_user_status || {
+    error_and_exit "${CMD_OUTPUT}"
+  }
+
+  # default exit message
+  EXIT_CODE_MSG="user '${RC_USER}' is $RC_USER_STATUS"
+  
+  # warning
+  if [[ ${RC_USER_STATUS} == "${WARNING}" ]]; then
+    EXIT_CODE="WARNING"
+  fi
+
+  # critical
+  if [[ ${RC_USER_STATUS} == "${CRITICAL}" ]]; then
+    EXIT_CODE="CRITICAL"
+  fi
+
+  # final status output
+  echo "STATUS ${EXIT_CODE}: ${EXIT_CODE_MSG} | UserStatus=${perfdata[$RC_USER_STATUS]}"
+  
+  return ${exit_codes[$EXIT_CODE]};
+}
+
+
+# --------------------------------------
+# COMMAND LINE
+# --------------------------------------
+
+# usage info
+function display_help() {
+cat << EOF   
+Version: check_rocketchat_user_status ${__VERSION}
+
+Usage: ${0##*/} [-h]
+
+    -h             display this help and exit
+    -u username
+    -w warning  [online|away|offline]
+    -c critical [online|away|offline]
+
+Note: -w and -c are optional arguments. 
+
+For full debug trace use DEBUG=1 ./${0##*/}
+
+Please send feedback and bugreport to ${__AUTHOR}
+EOF
+}
+                            
+
+# check command line arguments
+OPTIND=1
+u_flag=false;
+w_flag=false;
+c_flag=false;
+
+while getopts ":hu:c:w:" opt; do
+  case ${opt} in
+    "h")
+      display_help
+      exit 0   
+      ;;
+    "u")
+      u_flag=true;
+      RC_USER=${OPTARG}
+      ;;
+    "w")
+      w_flag=true;
+      WARNING=${OPTARG}
+      ;;
+    "c")
+      c_flag=true;
+      CRITICAL=${OPTARG}
+      ;;
+    "?")
+      echo "Invalid option: -${OPTARG}" >&2
+      exit 3
+      ;;
+    ":")
+      echo "Option -${OPTARG} requires an argument" >&2
+      exit 3
+      ;;
+    *)
+      echo "Unknown error"
+      exit 3
+      ;;
+  esac
+done
+
+shift $(($OPTIND -1))
+
+# mandatory options
+if [[ "${u_flag}" = false ]] ; then
+  display_help >&2;
+  exit 1;
+fi;
+
+main;
+
+exit $?;
