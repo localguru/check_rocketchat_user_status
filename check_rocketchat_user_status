@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # --------------------------------------------------
-# Nagios/Icinga2 plugin: check_rocketchat_userstatus
+# Nagios/Icinga2 plugin: check_rocketchat_user_status
 # ---------------------------------------------------
 
 __AUTHOR="Marcus Schopen <marcus.schopen@uni-bielefeld.de>"
@@ -72,6 +72,7 @@ declare -A perfdata
 perfdata[offline]="0"
 perfdata[away]="1"
 perfdata[online]="2"
+
 
 # --------------------------------------
 # error and exit
