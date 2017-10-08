@@ -5,7 +5,7 @@
 # ---------------------------------------------------
 
 __AUTHOR="Marcus Schopen <marcus.schopen@uni-bielefeld.de>"
-__VERSION="0.0.1-1" # 06.10.2017
+__VERSION="0.0.2-0" # 06.10.2017
 
 # see DEFAULTS for configuartion
 
@@ -51,6 +51,10 @@ readonly DBHOST="localhost"
 readonly DBPORT="27017"
 readonly DBNAME="rocketchat"
 
+readonly LOG="true"
+readonly LOGPATH="/tmp"
+LOGFILE="${LOGPATH}/check_rocketchat_user_status"
+
 # rocket.chat stati
 readonly RC_STATI=("offline away online")
 
@@ -86,6 +90,19 @@ function error_and_exit() {
 }
 
 
+# --------------------------------------
+# logging
+# --------------------------------------
+
+function logging() {
+
+  local msg=${1:-} 
+  if [[ $LOG = true ]]; then
+     echo "$(date +"%b %d %T") ${msg}" >> "${LOGFILE}"
+  fi;
+
+  return 0
+}
 # --------------------------------------
 # connect to mongodb and get user status
 # --------------------------------------
@@ -163,7 +180,10 @@ function main() {
 
   # default exit message
   EXIT_CODE_MSG="user '${RC_USER}' is $RC_USER_STATUS"
-  
+
+  # set user specific logfile
+  LOGFILE="${LOGFILE}.${RC_USER}"
+    
   # warning
   if [[ ${RC_USER_STATUS} == "${WARNING}" ]]; then
     EXIT_CODE="WARNING"
@@ -174,8 +194,13 @@ function main() {
     EXIT_CODE="CRITICAL"
   fi
 
+  
   # final status output
-  echo "STATUS ${EXIT_CODE}: ${EXIT_CODE_MSG} | UserStatus=${perfdata[$RC_USER_STATUS]}"
+  OUTPUT="STATUS ${EXIT_CODE}: ${EXIT_CODE_MSG} | UserStatus=${perfdata[$RC_USER_STATUS]}"
+  echo "${OUTPUT}"
+
+  # logging
+  logging "${OUTPUT}"
   
   return ${exit_codes[$EXIT_CODE]};
 }
